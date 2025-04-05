@@ -280,7 +280,7 @@ function App() {
 
           {isLoading ? (
             <div className="flex items-center justify-center h-[480px] w-[640px] bg-gray-800 rounded-lg">
-              <div className="text-xl">Loading model...</div>
+              <div className="text-xl">Loading Model...</div>
             </div>
           ) : (
             <div className="relative">
