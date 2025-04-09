@@ -237,7 +237,7 @@ function App() {
       return 'sitting';
     }
 
-    // Check for movement
+    // Checking for movement
     if (isMoving({ x: nose.x, y: nose.y })) {
       return 'Movement';
     }
