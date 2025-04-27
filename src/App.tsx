@@ -5,7 +5,7 @@ import * as poseDetection from '@tensorflow-models/pose-detection';
 import { Camera, ActivitySquare } from 'lucide-react';
 
 // Activities we can detect based on pose
-const activities = ['Standing', 'Movement', 'Raising Hands', 'Stable'];
+const activities = ['Standing', 'Movement', 'Raising Hands', 'Stable', 'Waving', 'Sitting'];
 
 function App() {
   const webcamRef = useRef<Webcam>(null);
@@ -19,6 +19,10 @@ function App() {
   >([]);
   const [isWebcamReady, setIsWebcamReady] = useState(false);
   const [hasVideoStream, setHasVideoStream] = useState(false);
+  // Track wrist positions for waving detection
+  const [wristPositions, setWristPositions] = useState<
+    Array<{ left: { x: number; y: number }; right: { x: number; y: number } }>
+  >([]);
 
   useEffect(() => {
     const loadModel = async () => {
@@ -100,6 +104,53 @@ function App() {
     return avgMovement > 15; // Threshold for movement detection
   };
 
+  // Function to detect waving motion
+  const isWaving = (wristHistory: Array<{ left: { x: number; y: number }; right: { x: number; y: number } }>) => {
+    if (wristHistory.length < 10) return false; // Need enough history to detect wave pattern
+    
+    // Looking at just the last 10 frames for waving detection
+    const recentWristPositions = wristHistory.slice(-10);
+    
+    // Check for horizontal movement in either wrist
+    const leftWristXChanges = recentWristPositions.map((pos, idx, arr) => {
+      if (idx === 0) return 0;
+      return Math.abs(pos.left.x - arr[idx - 1].left.x);
+    }).slice(1);
+    
+    const rightWristXChanges = recentWristPositions.map((pos, idx, arr) => {
+      if (idx === 0) return 0;
+      return Math.abs(pos.right.x - arr[idx - 1].right.x);
+    }).slice(1);
+    
+    // Calculate average horizontal movement
+    const avgLeftWristXChange = leftWristXChanges.reduce((sum, val) => sum + val, 0) / leftWristXChanges.length;
+    const avgRightWristXChange = rightWristXChanges.reduce((sum, val) => sum + val, 0) / rightWristXChanges.length;
+    
+    // Check for vertical stability (waving should be mostly horizontal)
+    const leftWristYChanges = recentWristPositions.map((pos, idx, arr) => {
+      if (idx === 0) return 0;
+      return Math.abs(pos.left.y - arr[idx - 1].left.y);
+    }).slice(1);
+    
+    const rightWristYChanges = recentWristPositions.map((pos, idx, arr) => {
+      if (idx === 0) return 0;
+      return Math.abs(pos.right.y - arr[idx - 1].right.y);
+    }).slice(1);
+    
+    const avgLeftWristYChange = leftWristYChanges.reduce((sum, val) => sum + val, 0) / leftWristYChanges.length;
+    const avgRightWristYChange = rightWristYChanges.reduce((sum, val) => sum + val, 0) / rightWristYChanges.length;
+    
+    // Waving is detected when:
+    // 1. Significant horizontal movement in either wrist
+    // 2. Horizontal movement is significantly greater than vertical movement
+    // 3. Movement has some consistency (not just random)
+    
+    const leftWristWaving = avgLeftWristXChange > 20 && avgLeftWristXChange > 2 * avgLeftWristYChange;
+    const rightWristWaving = avgRightWristXChange > 20 && avgRightWristXChange > 2 * avgRightWristYChange;
+    
+    return leftWristWaving || rightWristWaving;
+  };
+
   const detectPose = async () => {
     if (!detector || !webcamRef.current) return;
 
@@ -128,6 +179,19 @@ function App() {
           setPreviousPositions((prev) => [
             ...prev.slice(-9),
             { x: nose.x, y: nose.y },
+          ]);
+        }
+
+        // Update wrist position history for waving detection
+        const leftWrist = keypoints.find((kp) => kp.name === 'left_wrist');
+        const rightWrist = keypoints.find((kp) => kp.name === 'right_wrist');
+        if (leftWrist && rightWrist) {
+          setWristPositions((prev) => [
+            ...prev.slice(-19),
+            {
+              left: { x: leftWrist.x, y: leftWrist.y },
+              right: { x: rightWrist.x, y: rightWrist.y }
+            }
           ]);
         }
       }
@@ -209,6 +273,11 @@ function App() {
       return 'Raising Hands';
     }
 
+    // Check for waving (horizontal movement of wrists)
+    if (isWaving(wristPositions)) {
+      return 'Waving';
+    }
+
     // Check for squatting
     // Characteristics: bent knees, lowered hips, upright torso
     const isSquatting =
@@ -220,7 +289,7 @@ function App() {
       nose.y > (leftShoulder.y + rightShoulder.y) / 2; // Head above shoulders
 
     if (isSquatting) {
-      return 'squatting';
+      return 'Squatting';
     }
 
     // Check for sitting
@@ -228,13 +297,13 @@ function App() {
     const isSitting =
       leftKneeAngle < 120 &&
       rightKneeAngle < 120 && // Bent knees
-      leftHip.y > leftKnee.y &&
-      rightHip.y > rightKnee.y && // Hips lower than knees
-      shoulderHipRatio < 0.3 && // Compressed vertical distance between shoulders and hips
-      hipKneeRatio > 0.4; // Significant distance between hips and knees
+      leftHip.y > leftKnee.y - 20 && // Hips approximately at knee level or slightly above
+      rightHip.y > rightKnee.y - 20 &&
+      shoulderHipRatio < 0.4 && // Compressed vertical distance between shoulders and hips
+      hipKneeRatio > 0.3; // Significant distance between hips and knees
 
     if (isSitting) {
-      return 'sitting';
+      return 'Sitting';
     }
 
     // Checking for movement
@@ -266,7 +335,7 @@ function App() {
     }, 100);
 
     return () => clearInterval(interval);
-  }, [detector, previousPositions, isWebcamReady, hasVideoStream]);
+  }, [detector, previousPositions, wristPositions, isWebcamReady, hasVideoStream]);
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
